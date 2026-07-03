@@ -72,6 +72,25 @@ func TestSinkMissingDoesNotPolluteMainLogger(t *testing.T) {
 	assertFileNotContains(t, filepath.Join(dir, "api", "info.log"), "fallback-message")
 }
 
+func TestFileLoggerWritesDynamicRelativePath(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init("api", Config{Level: "info", Dir: dir}); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	t.Cleanup(Close)
+
+	first := FileLogger("script.alpha", "scripts/alpha.log")
+	second := FileLogger("script.alpha", "scripts/alpha.log")
+	if first != second {
+		t.Fatalf("FileLogger should reuse logger for same name and path")
+	}
+
+	first.Info("dynamic-script-message")
+	Sync()
+
+	assertFileContains(t, filepath.Join(dir, "api", "scripts", "alpha.log"), "dynamic-script-message")
+}
+
 func TestResolveSinkLogPathDefaults(t *testing.T) {
 	path := resolveSinkLogPath("api", Config{Dir: "logs"}, "access", SinkConfig{})
 	want := filepath.Join("logs", "api", "access.log")

@@ -117,9 +117,19 @@ logx.Infof("message %s", value)
 ```go
 logx.Sink("access")
 logx.SinkNamed("access", "http.access")
+logx.FileLogger("script.demo", "scripts/demo.log")
 ```
 
 `go-logx` 不内置 `access`、`script` 等业务 sink 名称。sink 名称完全由使用方配置决定，调用时显式传入同一个名称。
+
+动态文件日志：
+
+```go
+scriptLog := logx.FileLogger("script.demo", "scripts/demo.log")
+scriptLog.Info("script started")
+```
+
+`FileLogger` 的路径必须是应用日志目录下的相对路径，不能使用绝对路径或 `..` 跳出日志目录。
 
 ## 输出结构
 

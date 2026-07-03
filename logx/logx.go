@@ -15,17 +15,20 @@ import (
 )
 
 var (
-	mu            sync.RWMutex
-	mainLogger    = zap.NewNop()
-	noOpLogger    = zap.NewNop()
-	sinkLoggers   = map[string]*zap.Logger{}
-	writeClosers  []io.Closer
-	rotateClosers []dailyRotator
-	namedCache    sync.Map
-	sinkCache     sync.Map
-	loggerGen     atomic.Uint64
-	rotateStopCh  chan struct{}
-	rotateWG      sync.WaitGroup
+	mu             sync.RWMutex
+	mainLogger     = zap.NewNop()
+	noOpLogger     = zap.NewNop()
+	sinkLoggers    = map[string]*zap.Logger{}
+	fileLoggers    = map[string]*zap.Logger{}
+	writeClosers   []io.Closer
+	rotateClosers  []dailyRotator
+	currentAppName string
+	currentConfig  Config
+	namedCache     sync.Map
+	sinkCache      sync.Map
+	loggerGen      atomic.Uint64
+	rotateStopCh   chan struct{}
+	rotateWG       sync.WaitGroup
 )
 
 type levelEnablerFunc func(level zapcore.Level) bool
@@ -55,10 +58,16 @@ func Init(appName string, cfg Config) error {
 	for _, logger := range sinkLoggers {
 		_ = logger.Sync()
 	}
+	for _, logger := range fileLoggers {
+		_ = logger.Sync()
+	}
 	closeWriteClosersLocked()
 
 	mainLogger = logger
 	sinkLoggers = sinks
+	fileLoggers = map[string]*zap.Logger{}
+	currentAppName = appName
+	currentConfig = cfg
 	writeClosers = append(closers, sinkClosers...)
 	rotateClosers = append(append(make([]dailyRotator, 0, len(rotators)+len(sinkRotators)), rotators...), sinkRotators...)
 	loggerGen.Add(1)
@@ -134,12 +143,47 @@ func SinkNamed(sinkName, loggerName string) *zap.Logger {
 	return cached
 }
 
+// FileLogger 返回写入应用日志目录下指定相对路径的动态文件日志实例。
+// relativePath 必须是相对路径，且不能包含跳出日志目录的 ".."。
+func FileLogger(name, relativePath string) *zap.Logger {
+	name = strings.TrimSpace(name)
+	relativePath = strings.TrimSpace(relativePath)
+	if name == "" || relativePath == "" || filepath.IsAbs(relativePath) {
+		return noOpLogger
+	}
+	cleanPath := filepath.Clean(relativePath)
+	if cleanPath == "." || cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) {
+		return noOpLogger
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	key := name + "\x00" + cleanPath
+	if logger, ok := fileLoggers[key]; ok && logger != nil {
+		return logger
+	}
+
+	path := filepath.Join(resolveProgramLogDir(currentAppName, currentConfig), cleanPath)
+	logger, closers, rotators, err := buildSingleFileLogger(path, currentConfig, false)
+	if err != nil {
+		return noOpLogger
+	}
+	fileLoggers[key] = logger.Named(name)
+	writeClosers = append(writeClosers, closers...)
+	rotateClosers = append(rotateClosers, rotators...)
+	return fileLoggers[key]
+}
+
 // Sync 刷盘日志缓冲。
 func Sync() {
 	mu.RLock()
 	defer mu.RUnlock()
 	_ = mainLogger.Sync()
 	for _, logger := range sinkLoggers {
+		_ = logger.Sync()
+	}
+	for _, logger := range fileLoggers {
 		_ = logger.Sync()
 	}
 }
@@ -153,9 +197,15 @@ func Close() {
 	for _, logger := range sinkLoggers {
 		_ = logger.Sync()
 	}
+	for _, logger := range fileLoggers {
+		_ = logger.Sync()
+	}
 	closeWriteClosersLocked()
 	mainLogger = zap.NewNop()
 	sinkLoggers = map[string]*zap.Logger{}
+	fileLoggers = map[string]*zap.Logger{}
+	currentAppName = ""
+	currentConfig = Config{}
 	loggerGen.Add(1)
 	zap.ReplaceGlobals(mainLogger)
 }
@@ -243,6 +293,45 @@ func buildSinkLogger(appName string, cfg Config, name string, sinkCfg SinkConfig
 			zapcore.NewConsoleEncoder(newConsoleEncoderConfig()),
 			zapcore.AddSync(os.Stdout),
 			sinkLevel,
+		))
+	}
+	return zap.New(zapcore.NewTee(cores...), zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel)), closers, rotators, nil
+}
+
+func buildSingleFileLogger(path string, cfg Config, consoleEnabled bool) (*zap.Logger, []io.Closer, []dailyRotator, error) {
+	cores := make([]zapcore.Core, 0, 2)
+	closers := make([]io.Closer, 0, 1)
+	rotators := make([]dailyRotator, 0, 1)
+	level := zap.NewAtomicLevelAt(zap.DebugLevel)
+	if consoleEnabled {
+		cores = append(cores, zapcore.NewCore(
+			zapcore.NewConsoleEncoder(newConsoleEncoderConfig()),
+			zapcore.AddSync(os.Stdout),
+			level,
+		))
+	}
+	writer, err := newRollingWriter(path, cfg)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if writer != nil {
+		cores = append(cores, zapcore.NewCore(
+			zapcore.NewConsoleEncoder(newFileEncoderConfig()),
+			writer,
+			level,
+		))
+		if closer, ok := writer.(io.Closer); ok {
+			closers = append(closers, closer)
+		}
+		if rotator, ok := writer.(dailyRotator); ok {
+			rotators = append(rotators, rotator)
+		}
+	}
+	if len(cores) == 0 {
+		cores = append(cores, zapcore.NewCore(
+			zapcore.NewConsoleEncoder(newConsoleEncoderConfig()),
+			zapcore.AddSync(os.Stdout),
+			level,
 		))
 	}
 	return zap.New(zapcore.NewTee(cores...), zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel)), closers, rotators, nil

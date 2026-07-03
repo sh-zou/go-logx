@@ -28,6 +28,9 @@ func newRollingWriter(path string, cfg Config) (zapcore.WriteSyncer, error) {
 	if path == "" {
 		return nil, nil
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
 	if cfg.MaxSize <= 0 {
 		return newPlainFileWriteSyncer(path)
 	}
@@ -46,9 +49,6 @@ func newRollingWriter(path string, cfg Config) (zapcore.WriteSyncer, error) {
 }
 
 func newPlainFileWriteSyncer(path string) (zapcore.WriteSyncer, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, err
-	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, err
