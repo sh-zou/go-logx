@@ -15,12 +15,26 @@ var (
 
 // Package 返回按调用方包路径命名的日志包装器。
 // 例如 example.com/project/internal/app/bootstrap 会映射为 internal.app.bootstrap。
+//
+//go:noinline
 func Package() ModuleLogger {
-	return Module(callerModuleName(1))
+	return Module(callerModuleName(2))
 }
 
+// PackageSkip 返回按调用方包路径命名的日志包装器，并额外跳过 skip 层封装。
+// 适用于项目内保留 logger.Infof 这类适配层时，让日志名称仍指向真实业务调用包。
+//
+//go:noinline
+func PackageSkip(skip int) ModuleLogger {
+	if skip < 0 {
+		skip = 0
+	}
+	return Module(callerModuleName(skip + 2))
+}
+
+//go:noinline
 func callerModuleName(skip int) string {
-	pc, _, _, ok := runtime.Caller(skip + 1)
+	pc, _, _, ok := runtime.Caller(skip)
 	if !ok {
 		return ""
 	}
