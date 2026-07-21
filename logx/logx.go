@@ -1,6 +1,7 @@
 package logx
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	stdlog "log"
@@ -56,7 +57,7 @@ func Init(appName string, cfg Config) error {
 	}
 	sinks, sinkClosers, sinkRotators, err := buildSinkLoggers(appName, cfg)
 	if err != nil {
-		closeClosers(closers)
+		_ = closeClosers(closers)
 		return err
 	}
 
@@ -68,7 +69,7 @@ func Init(appName string, cfg Config) error {
 	for _, logger := range fileBaseLoggers {
 		_ = logger.Sync()
 	}
-	closeWriteClosersLocked()
+	_ = closeWriteClosersLocked()
 
 	mainLogger = logger
 	sinkLoggers = sinks
@@ -79,6 +80,7 @@ func Init(appName string, cfg Config) error {
 	writeClosers = append(closers, sinkClosers...)
 	rotateClosers = append(append(make([]dailyRotator, 0, len(rotators)+len(sinkRotators)), rotators...), sinkRotators...)
 	loggerGen.Add(1)
+	clearLoggerCachesLocked()
 	startRotateSchedulerLocked()
 
 	zap.ReplaceGlobals(mainLogger)
@@ -100,15 +102,21 @@ func Sugar() *zap.SugaredLogger {
 // Named 返回带名称的主日志实例。
 func Named(name string) *zap.Logger {
 	name = strings.TrimSpace(name)
+	mu.RLock()
+	defer mu.RUnlock()
+	return namedLoggerLocked(name)
+}
+
+func namedLoggerLocked(name string) *zap.Logger {
 	if name == "" {
-		return L()
+		return mainLogger
 	}
 	key := currentLoggerCacheKey("main", name)
 	if cached, ok := namedCache.Load(key); ok {
 		logger, _ := cached.(*zap.Logger)
 		return logger
 	}
-	logger := L().Named(name)
+	logger := mainLogger.Named(name)
 	actual, _ := namedCache.LoadOrStore(key, logger)
 	cached, _ := actual.(*zap.Logger)
 	return cached
@@ -118,11 +126,15 @@ func Named(name string) *zap.Logger {
 // 未配置的 sink 会返回 no-op logger，而不是回退到主日志，避免通道配置错误时污染业务日志。
 func Sink(name string) *zap.Logger {
 	name = strings.TrimSpace(name)
+	mu.RLock()
+	defer mu.RUnlock()
+	return sinkLoggerLocked(name)
+}
+
+func sinkLoggerLocked(name string) *zap.Logger {
 	if name == "" {
 		return noOpLogger
 	}
-	mu.RLock()
-	defer mu.RUnlock()
 	if logger, ok := sinkLoggers[name]; ok && logger != nil {
 		return logger
 	}
@@ -133,18 +145,20 @@ func Sink(name string) *zap.Logger {
 func SinkNamed(sinkName, loggerName string) *zap.Logger {
 	sinkName = strings.TrimSpace(sinkName)
 	loggerName = strings.TrimSpace(loggerName)
+	mu.RLock()
+	defer mu.RUnlock()
 	if sinkName == "" {
-		return Named(loggerName)
+		return namedLoggerLocked(loggerName)
 	}
 	if loggerName == "" {
-		return Sink(sinkName)
+		return sinkLoggerLocked(sinkName)
 	}
 	key := currentLoggerCacheKey("sink:"+sinkName, loggerName)
 	if cached, ok := sinkCache.Load(key); ok {
 		logger, _ := cached.(*zap.Logger)
 		return logger
 	}
-	logger := Sink(sinkName).Named(loggerName)
+	logger := sinkLoggerLocked(sinkName).Named(loggerName)
 	actual, _ := sinkCache.LoadOrStore(key, logger)
 	cached, _ := actual.(*zap.Logger)
 	return cached
@@ -207,31 +221,29 @@ func OpenFileLogger(name, relativePath string) (*zap.Logger, error) {
 
 // Sync 刷盘日志缓冲。
 func Sync() {
+	_ = Flush()
+}
+
+// Flush 刷盘所有受管理的日志，并返回聚合后的同步错误。
+func Flush() error {
 	mu.RLock()
 	defer mu.RUnlock()
-	_ = mainLogger.Sync()
-	for _, logger := range sinkLoggers {
-		_ = logger.Sync()
-	}
-	for _, logger := range fileBaseLoggers {
-		_ = logger.Sync()
-	}
+	return syncLoggersLocked()
 }
 
 // Close 刷盘并关闭所有受管理的日志文件。
 // Close 后，logx 会回退为 no-op logger，直到再次调用 Init。
 func Close() {
+	_ = Shutdown()
+}
+
+// Shutdown 刷盘并关闭所有受管理的日志文件，并返回聚合后的错误。
+func Shutdown() error {
 	mu.Lock()
 	defer mu.Unlock()
 	restoreStdLogLocked()
-	_ = mainLogger.Sync()
-	for _, logger := range sinkLoggers {
-		_ = logger.Sync()
-	}
-	for _, logger := range fileBaseLoggers {
-		_ = logger.Sync()
-	}
-	closeWriteClosersLocked()
+	err := syncLoggersLocked()
+	err = errors.Join(err, closeWriteClosersLocked())
 	mainLogger = zap.NewNop()
 	sinkLoggers = map[string]*zap.Logger{}
 	fileLoggers = map[string]*zap.Logger{}
@@ -239,7 +251,27 @@ func Close() {
 	currentAppName = ""
 	currentConfig = Config{}
 	loggerGen.Add(1)
+	clearLoggerCachesLocked()
 	zap.ReplaceGlobals(mainLogger)
+	return err
+}
+
+func syncLoggersLocked() error {
+	var errs []error
+	if err := mainLogger.Sync(); err != nil {
+		errs = append(errs, fmt.Errorf("sync main logger: %w", err))
+	}
+	for name, logger := range sinkLoggers {
+		if err := logger.Sync(); err != nil {
+			errs = append(errs, fmt.Errorf("sync sink %q: %w", name, err))
+		}
+	}
+	for path, logger := range fileBaseLoggers {
+		if err := logger.Sync(); err != nil {
+			errs = append(errs, fmt.Errorf("sync file %q: %w", path, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func redirectStdLogLocked(logger *zap.Logger) {
@@ -302,7 +334,7 @@ func buildSinkLoggers(appName string, cfg Config) (map[string]*zap.Logger, []io.
 		}
 		logger, sinkClosers, sinkRotators, err := buildSinkLogger(appName, cfg, name, sinkCfg)
 		if err != nil {
-			closeClosers(closers)
+			_ = closeClosers(closers)
 			return nil, nil, nil, err
 		}
 		result[name] = logger
@@ -447,25 +479,25 @@ func buildFileCores(appName string, cfg Config, atomicLevel zap.AtomicLevel) ([]
 
 	if atomicLevel.Enabled(zap.DebugLevel) {
 		if err := build(paths.debug, exactLevelEnabler(atomicLevel, zap.DebugLevel)); err != nil {
-			closeClosers(closers)
+			_ = closeClosers(closers)
 			return nil, nil, nil, err
 		}
 	}
 	if atomicLevel.Enabled(zap.InfoLevel) {
 		if err := build(paths.info, exactLevelEnabler(atomicLevel, zap.InfoLevel)); err != nil {
-			closeClosers(closers)
+			_ = closeClosers(closers)
 			return nil, nil, nil, err
 		}
 	}
 	if atomicLevel.Enabled(zap.WarnLevel) {
 		if err := build(paths.warn, exactLevelEnabler(atomicLevel, zap.WarnLevel)); err != nil {
-			closeClosers(closers)
+			_ = closeClosers(closers)
 			return nil, nil, nil, err
 		}
 	}
 	if atomicLevel.Enabled(zap.ErrorLevel) {
 		if err := build(paths.error, errorLevelEnabler(atomicLevel)); err != nil {
-			closeClosers(closers)
+			_ = closeClosers(closers)
 			return nil, nil, nil, err
 		}
 	}
@@ -559,19 +591,29 @@ func detectProcessName() string {
 	return strings.TrimSpace(name)
 }
 
-func closeWriteClosersLocked() {
+func closeWriteClosersLocked() error {
 	stopRotateSchedulerLocked()
-	closeClosers(writeClosers)
+	err := closeClosers(writeClosers)
 	writeClosers = nil
 	rotateClosers = nil
+	return err
 }
 
-func closeClosers(closers []io.Closer) {
-	for _, closer := range closers {
+func closeClosers(closers []io.Closer) error {
+	var errs []error
+	for index, closer := range closers {
 		if closer != nil {
-			_ = closer.Close()
+			if err := closer.Close(); err != nil {
+				errs = append(errs, fmt.Errorf("close writer %d: %w", index, err))
+			}
 		}
 	}
+	return errors.Join(errs...)
+}
+
+func clearLoggerCachesLocked() {
+	namedCache.Clear()
+	sinkCache.Clear()
 }
 
 type loggerCacheKey struct {

@@ -180,7 +180,7 @@
 
 ### 任务 8：清理跨 generation 缓存并更新文档
 
-**说明：** 在持有一致生命周期锁的条件下清理 `namedCache`、`sinkCache`、`moduleLoggerCache`，防止旧 logger 被重新插入；同步 README 的错误 API、路径约束、轮转语义和最新安装版本。
+**说明：** 在持有一致生命周期锁的条件下清理 `namedCache`、`sinkCache`，删除与 Named 缓存重复的 `moduleLoggerCache`，防止旧 logger 被重新插入；同步 README 的错误 API、路径约束、轮转语义和最新安装版本。
 
 **验收标准：**
 

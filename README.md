@@ -13,7 +13,7 @@ github.com/sh-zou/go-logx
 安装：
 
 ```powershell
-go get github.com/sh-zou/go-logx@v1.0.0
+go get github.com/sh-zou/go-logx@v1.0.4
 ```
 
 仓库地址：
@@ -52,7 +52,7 @@ log:
 | `level` | 主日志级别，支持 `debug/info/warn/error` |
 | `dir` | 日志根目录，默认 `logs` |
 | `consoleEnabled` | 主日志是否输出控制台 |
-| `maxSize` | 单个日志文件最大大小，单位 MB；`0` 表示普通追加文件 |
+| `maxSize` | 单个日志文件最大大小，单位 MB；大于 `0` 时同时在本地午夜主动轮转，`0` 表示普通追加文件 |
 | `maxBackups` | 滚动日志最大保留数量 |
 | `maxAge` | 滚动日志最大保留天数 |
 | `compress` | 是否压缩滚动历史日志 |
@@ -94,6 +94,8 @@ func main() {
 logx.Init(appName, cfg)
 logx.Sync()
 logx.Close()
+logx.Flush()
+logx.Shutdown()
 logx.L()
 logx.Sugar()
 logx.Named("module")
@@ -118,6 +120,7 @@ logx.Infof("message %s", value)
 logx.Sink("access")
 logx.SinkNamed("access", "http.access")
 logx.FileLogger("script.demo", "scripts/demo.log")
+logx.OpenFileLogger("script.demo", "scripts/demo.log")
 ```
 
 `go-logx` 不内置 `access`、`script` 等业务 sink 名称。sink 名称完全由使用方配置决定，调用时显式传入同一个名称。
@@ -125,11 +128,31 @@ logx.FileLogger("script.demo", "scripts/demo.log")
 动态文件日志：
 
 ```go
-scriptLog := logx.FileLogger("script.demo", "scripts/demo.log")
+scriptLog, err := logx.OpenFileLogger("script.demo", "scripts/demo.log")
+if err != nil {
+    return
+}
 scriptLog.Info("script started")
 ```
 
-`FileLogger` 的路径必须是应用日志目录下的相对路径，不能使用绝对路径或 `..` 跳出日志目录。
+`OpenFileLogger` 会返回路径校验和文件创建错误，推荐新代码使用。`FileLogger` 保留兼容行为，失败时返回 no-op logger。
+
+动态文件路径必须是应用日志目录下的相对路径，不能使用绝对路径或 `..` 跳出日志目录。`appName` 和 `Config.FileName` 只能是单个目录名称；sink 的 `dir` 可以是应用日志目录内的相对子目录。
+
+## 错误处理
+
+`Sync` 和 `Close` 保持原有无返回值 API。需要处理磁盘同步或文件关闭错误时，使用：
+
+```go
+if err := logx.Flush(); err != nil {
+    // handle sync error
+}
+if err := logx.Shutdown(); err != nil {
+    // handle sync or close error
+}
+```
+
+`Shutdown` 与 `Close` 一样会释放全部受管理资源。二者只应选择一个作为应用退出流程。
 
 ## 输出结构
 

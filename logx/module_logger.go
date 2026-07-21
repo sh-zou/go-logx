@@ -2,12 +2,9 @@ package logx
 
 import (
 	"strings"
-	"sync"
 
 	"go.uber.org/zap"
 )
-
-var moduleLoggerCache sync.Map
 
 // ModuleLogger 是延迟解析的日志包装器。
 // 即使在 Init 调用前声明为包级变量也是安全的。
@@ -31,15 +28,7 @@ func (l ModuleLogger) Logger() *zap.Logger {
 	if name == "" {
 		return L()
 	}
-	key := currentLoggerCacheKey("module", name)
-	if cached, ok := moduleLoggerCache.Load(key); ok {
-		logger, _ := cached.(*zap.Logger)
-		return logger
-	}
-	logger := Named(name)
-	actual, _ := moduleLoggerCache.LoadOrStore(key, logger)
-	cached, _ := actual.(*zap.Logger)
-	return cached
+	return Named(name)
 }
 
 func (l ModuleLogger) callerAdjustedLogger() *zap.Logger {
