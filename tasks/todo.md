@@ -11,4 +11,4 @@
 - [x] 任务 7：新增 Flush/Shutdown 并聚合资源错误
 - [x] 任务 8：清理跨 generation 缓存并更新 README
 - [x] 最终检查：test、vet、fmt、Windows 路径测试
-- [ ] CI 检查：govulncheck、Linux symlink 路径测试
+- [x] CI 检查：Linux symlink 路径测试、race 和 govulncheck 工作流

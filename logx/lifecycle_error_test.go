@@ -2,6 +2,7 @@ package logx
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"go.uber.org/zap"
@@ -74,4 +75,31 @@ func TestShutdownAggregatesSyncAndCloseErrors(t *testing.T) {
 	if !errors.Is(err, syncErr) || !errors.Is(err, closeErr) {
 		t.Fatalf("Shutdown() error = %v, want sync and close errors", err)
 	}
+}
+
+func TestInitReturnsPreviousGenerationCleanupErrors(t *testing.T) {
+	if err := Init("previous", Config{Dir: t.TempDir()}); err != nil {
+		t.Fatalf("initial Init() error = %v", err)
+	}
+
+	syncErr := errors.New("previous sync failed")
+	closeErr := errors.New("previous close failed")
+	mu.Lock()
+	mainLogger = zap.New(zapcore.NewCore(
+		zapcore.NewConsoleEncoder(newFileEncoderConfig()),
+		&errorWriteSyncer{syncErr: syncErr},
+		zap.DebugLevel,
+	))
+	writeClosers = append(writeClosers, &errorCloser{err: closeErr})
+	mu.Unlock()
+
+	newDir := t.TempDir()
+	err := Init("next", Config{Dir: newDir})
+	t.Cleanup(Close)
+	if !errors.Is(err, syncErr) || !errors.Is(err, closeErr) {
+		t.Fatalf("Init() error = %v, want previous sync and close errors", err)
+	}
+	Info("new-generation-message")
+	Sync()
+	assertFileContains(t, filepath.Join(newDir, "next", "info.log"), "new-generation-message")
 }

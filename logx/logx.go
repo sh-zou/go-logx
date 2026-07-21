@@ -68,14 +68,8 @@ func Init(appName string, cfg Config) error {
 	}
 
 	redirectStdLogLocked(logger)
-	_ = mainLogger.Sync()
-	for _, logger := range sinkLoggers {
-		_ = logger.Sync()
-	}
-	for _, logger := range fileBaseLoggers {
-		_ = logger.Sync()
-	}
-	_ = closeWriteClosersLocked()
+	cleanupErr := syncLoggersLocked()
+	cleanupErr = errors.Join(cleanupErr, closeWriteClosersLocked())
 
 	mainLogger = logger
 	sinkLoggers = sinks
@@ -91,7 +85,7 @@ func Init(appName string, cfg Config) error {
 	startRotateSchedulerLocked()
 
 	zap.ReplaceGlobals(mainLogger)
-	return nil
+	return cleanupErr
 }
 
 // L 返回主日志实例。

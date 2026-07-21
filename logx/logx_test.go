@@ -5,6 +5,7 @@ import (
 	stdlog "log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -298,7 +299,10 @@ func TestOpenFileLoggerRejectsSymlinkEscape(t *testing.T) {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
 	if err := os.Symlink(outside, link); err != nil {
-		t.Skipf("symlink unavailable on this platform: %v", err)
+		if runtime.GOOS == "windows" {
+			t.Skipf("symlink unavailable on Windows: %v", err)
+		}
+		t.Fatalf("Symlink() error = %v", err)
 	}
 	if err := Init("api", Config{Dir: logDir}); err != nil {
 		t.Fatalf("Init() error = %v", err)

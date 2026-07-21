@@ -1,0 +1,29 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.4
+      - run: go test ./...
+      - run: go vet ./...
+      - if: runner.os == 'Linux'
+        run: go test -race ./...
+      - if: runner.os == 'Linux'
+        run: go test -run TestOpenFileLoggerRejectsSymlinkEscape -v ./logx
+      - if: runner.os == 'Linux'
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

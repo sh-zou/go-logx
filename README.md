@@ -13,10 +13,10 @@ github.com/sh-zou/go-logx
 安装：
 
 ```powershell
-go get github.com/sh-zou/go-logx@master
+go get github.com/sh-zou/go-logx@v1.0.4
 ```
 
-当前文档包含尚未发布到 `v1.0.4` 的错误处理 API，因此在下一个正式版本发布前请安装 `master` 开发快照；生产使用应等待并固定到包含这些 API 的新版本标签。
+上面的命令安装稳定版 `v1.0.4`，适用于当前已发布的旧 API。本文中的 `OpenFileLogger`、`Flush` 和 `Shutdown` 属于待发布改动；使用这些 API 时，请从包含本次提交的源码构建，或等待包含它们的新版本标签，不要将它们与 `v1.0.4` 混用。
 
 仓库地址：
 
@@ -155,6 +155,8 @@ if err := logx.Shutdown(); err != nil {
 ```
 
 `Shutdown` 与 `Close` 一样会释放全部受管理资源。二者只应选择一个作为应用退出流程。
+
+重复调用 `Init` 时，库会先切换到新配置，再返回上一代 logger 的同步或关闭错误。因此 `Init` 返回清理错误时，新配置已经生效；调用方应记录或处理该错误，不要据此重复初始化。
 
 ## 输出结构
 
