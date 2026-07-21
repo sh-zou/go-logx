@@ -32,7 +32,10 @@ func (l ModuleLogger) Logger() *zap.Logger {
 }
 
 func (l ModuleLogger) callerAdjustedLogger() *zap.Logger {
-	return l.Logger().WithOptions(zap.AddCallerSkip(1))
+	name := strings.TrimSpace(l.name)
+	mu.RLock()
+	defer mu.RUnlock()
+	return callerLogger("module", name, namedLoggerLocked(name))
 }
 
 // Debug 输出 debug 日志。

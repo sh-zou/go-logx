@@ -38,6 +38,21 @@ func TestModuleLoggerDirectAndWrappedCallsReportBusinessCaller(t *testing.T) {
 	assertLineContains(t, path, "direct-module-caller", "caller_test.go")
 }
 
+func TestCallerAdjustedLoggerIsCachedWithinGeneration(t *testing.T) {
+	if err := Init("api", Config{Dir: t.TempDir()}); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	t.Cleanup(Close)
+
+	if first, second := callerAdjustedLogger(), callerAdjustedLogger(); first != second {
+		t.Fatal("callerAdjustedLogger() did not reuse the generation cache")
+	}
+	module := Module("module")
+	if first, second := module.callerAdjustedLogger(), module.callerAdjustedLogger(); first != second {
+		t.Fatal("ModuleLogger.callerAdjustedLogger() did not reuse the generation cache")
+	}
+}
+
 func assertLineContains(t *testing.T, filePath, message, want string) {
 	t.Helper()
 	content := readFileEventually(t, filePath, message)

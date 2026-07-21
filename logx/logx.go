@@ -30,6 +30,7 @@ var (
 	currentConfig   Config
 	namedCache      sync.Map
 	sinkCache       sync.Map
+	callerCache     sync.Map
 	loggerGen       atomic.Uint64
 	rotationMgr     *rotationManager
 	restoreStdLog   func()
@@ -614,6 +615,19 @@ func closeClosers(closers []io.Closer) error {
 func clearLoggerCachesLocked() {
 	namedCache.Clear()
 	sinkCache.Clear()
+	callerCache.Clear()
+}
+
+func callerLogger(scope, name string, logger *zap.Logger) *zap.Logger {
+	key := currentLoggerCacheKey("caller:"+scope, name)
+	if cached, ok := callerCache.Load(key); ok {
+		cachedLogger, _ := cached.(*zap.Logger)
+		return cachedLogger
+	}
+	adjusted := logger.WithOptions(zap.AddCallerSkip(1))
+	actual, _ := callerCache.LoadOrStore(key, adjusted)
+	cachedLogger, _ := actual.(*zap.Logger)
+	return cachedLogger
 }
 
 type loggerCacheKey struct {

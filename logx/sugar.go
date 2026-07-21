@@ -3,7 +3,9 @@ package logx
 import "go.uber.org/zap"
 
 func callerAdjustedLogger() *zap.Logger {
-	return L().WithOptions(zap.AddCallerSkip(1))
+	mu.RLock()
+	defer mu.RUnlock()
+	return callerLogger("main", "", mainLogger)
 }
 
 // Debug 输出到主日志。

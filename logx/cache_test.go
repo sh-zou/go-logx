@@ -5,6 +5,7 @@ import "testing"
 func TestCloseClearsLoggerCachesAcrossGenerations(t *testing.T) {
 	namedCache.Clear()
 	sinkCache.Clear()
+	callerCache.Clear()
 
 	for i := 0; i < 5; i++ {
 		if err := Init("api", Config{
@@ -18,6 +19,7 @@ func TestCloseClearsLoggerCachesAcrossGenerations(t *testing.T) {
 		Named("main")
 		SinkNamed("access", "request")
 		Module("module").Logger()
+		Module("module").Info("cached caller")
 		Close()
 	}
 
@@ -26,6 +28,9 @@ func TestCloseClearsLoggerCachesAcrossGenerations(t *testing.T) {
 	}
 	if got := syncMapSize(&sinkCache); got != 0 {
 		t.Fatalf("sink cache size = %d, want 0", got)
+	}
+	if got := syncMapSize(&callerCache); got != 0 {
+		t.Fatalf("caller cache size = %d, want 0", got)
 	}
 }
 
