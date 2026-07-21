@@ -1,6 +1,8 @@
 package logx
 
 import (
+	"bytes"
+	stdlog "log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,6 +60,45 @@ func TestInitReplacesPreviousLoggersAndClosesFiles(t *testing.T) {
 
 	assertFileContains(t, filepath.Join(firstDir, "first", "info.log"), "first-message")
 	assertFileContains(t, filepath.Join(secondDir, "second", "info.log"), "second-message")
+}
+
+func TestStandardLoggerFollowsReinitializationAndCloseRestoresState(t *testing.T) {
+	originalWriter := stdlog.Writer()
+	originalFlags := stdlog.Flags()
+	originalPrefix := stdlog.Prefix()
+	t.Cleanup(func() {
+		stdlog.SetOutput(originalWriter)
+		stdlog.SetFlags(originalFlags)
+		stdlog.SetPrefix(originalPrefix)
+		Close()
+	})
+
+	var restored bytes.Buffer
+	stdlog.SetOutput(&restored)
+	stdlog.SetFlags(0)
+	stdlog.SetPrefix("original:")
+
+	firstDir := t.TempDir()
+	if err := Init("first", Config{Dir: firstDir}); err != nil {
+		t.Fatalf("first Init() error = %v", err)
+	}
+	stdlog.Print("first-standard-message")
+	Sync()
+	assertFileContains(t, filepath.Join(firstDir, "first", "info.log"), "first-standard-message")
+
+	secondDir := t.TempDir()
+	if err := Init("second", Config{Dir: secondDir}); err != nil {
+		t.Fatalf("second Init() error = %v", err)
+	}
+	stdlog.Print("second-standard-message")
+	Sync()
+	assertFileContains(t, filepath.Join(secondDir, "second", "info.log"), "second-standard-message")
+
+	Close()
+	stdlog.Print("after-close")
+	if got := restored.String(); !strings.Contains(got, "original:after-close") {
+		t.Fatalf("restored standard log output = %q, want original prefix and writer", got)
+	}
 }
 
 func TestSinkMissingDoesNotPolluteMainLogger(t *testing.T) {
@@ -234,4 +275,34 @@ func assertFileNotContains(t *testing.T, path string, unwanted string) {
 	if strings.Contains(string(data), unwanted) {
 		t.Fatalf("%s contains %q; content: %s", path, unwanted, string(data))
 	}
+}
+
+func readFileEventually(t *testing.T, path string, want string) string {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if err == nil && strings.Contains(string(data), want) {
+			return string(data)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
+}
+
+func splitLines(value string) []string {
+	return strings.FieldsFunc(value, func(r rune) bool { return r == '\n' || r == '\r' })
+}
+
+func containsAll(value string, parts ...string) bool {
+	for _, part := range parts {
+		if !strings.Contains(value, part) {
+			return false
+		}
+	}
+	return true
 }

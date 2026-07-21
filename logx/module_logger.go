@@ -29,55 +29,59 @@ func (l ModuleLogger) Named() string {
 func (l ModuleLogger) Logger() *zap.Logger {
 	name := strings.TrimSpace(l.name)
 	if name == "" {
-		return L().WithOptions(zap.AddCallerSkip(1))
+		return L()
 	}
 	key := currentLoggerCacheKey("module", name)
 	if cached, ok := moduleLoggerCache.Load(key); ok {
 		logger, _ := cached.(*zap.Logger)
 		return logger
 	}
-	logger := Named(name).WithOptions(zap.AddCallerSkip(1))
+	logger := Named(name)
 	actual, _ := moduleLoggerCache.LoadOrStore(key, logger)
 	cached, _ := actual.(*zap.Logger)
 	return cached
 }
 
+func (l ModuleLogger) callerAdjustedLogger() *zap.Logger {
+	return l.Logger().WithOptions(zap.AddCallerSkip(1))
+}
+
 // Debug 输出 debug 日志。
 func (l ModuleLogger) Debug(msg string, fields ...zap.Field) {
-	l.Logger().Debug(msg, fields...)
+	l.callerAdjustedLogger().Debug(msg, fields...)
 }
 
 // Info 输出 info 日志。
 func (l ModuleLogger) Info(msg string, fields ...zap.Field) {
-	l.Logger().Info(msg, fields...)
+	l.callerAdjustedLogger().Info(msg, fields...)
 }
 
 // Warn 输出 warn 日志。
 func (l ModuleLogger) Warn(msg string, fields ...zap.Field) {
-	l.Logger().Warn(msg, fields...)
+	l.callerAdjustedLogger().Warn(msg, fields...)
 }
 
 // Error 输出 error 日志。
 func (l ModuleLogger) Error(msg string, fields ...zap.Field) {
-	l.Logger().Error(msg, fields...)
+	l.callerAdjustedLogger().Error(msg, fields...)
 }
 
 // Debugf 输出格式化 debug 日志。
 func (l ModuleLogger) Debugf(template string, args ...any) {
-	l.Logger().Sugar().Debugf(template, args...)
+	l.callerAdjustedLogger().Sugar().Debugf(template, args...)
 }
 
 // Infof 输出格式化 info 日志。
 func (l ModuleLogger) Infof(template string, args ...any) {
-	l.Logger().Sugar().Infof(template, args...)
+	l.callerAdjustedLogger().Sugar().Infof(template, args...)
 }
 
 // Warnf 输出格式化 warn 日志。
 func (l ModuleLogger) Warnf(template string, args ...any) {
-	l.Logger().Sugar().Warnf(template, args...)
+	l.callerAdjustedLogger().Sugar().Warnf(template, args...)
 }
 
 // Errorf 输出格式化 error 日志。
 func (l ModuleLogger) Errorf(template string, args ...any) {
-	l.Logger().Sugar().Errorf(template, args...)
+	l.callerAdjustedLogger().Sugar().Errorf(template, args...)
 }

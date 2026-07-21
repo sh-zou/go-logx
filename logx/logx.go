@@ -3,6 +3,7 @@ package logx
 import (
 	"fmt"
 	"io"
+	stdlog "log"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -30,6 +31,7 @@ var (
 	sinkCache       sync.Map
 	loggerGen       atomic.Uint64
 	rotationMgr     *rotationManager
+	restoreStdLog   func()
 )
 
 type levelEnablerFunc func(level zapcore.Level) bool
@@ -58,6 +60,7 @@ func Init(appName string, cfg Config) error {
 		return err
 	}
 
+	redirectStdLogLocked(logger)
 	_ = mainLogger.Sync()
 	for _, logger := range sinkLoggers {
 		_ = logger.Sync()
@@ -79,7 +82,6 @@ func Init(appName string, cfg Config) error {
 	startRotateSchedulerLocked()
 
 	zap.ReplaceGlobals(mainLogger)
-	_ = zap.RedirectStdLog(mainLogger)
 	return nil
 }
 
@@ -221,6 +223,7 @@ func Sync() {
 func Close() {
 	mu.Lock()
 	defer mu.Unlock()
+	restoreStdLogLocked()
 	_ = mainLogger.Sync()
 	for _, logger := range sinkLoggers {
 		_ = logger.Sync()
@@ -237,6 +240,27 @@ func Close() {
 	currentConfig = Config{}
 	loggerGen.Add(1)
 	zap.ReplaceGlobals(mainLogger)
+}
+
+func redirectStdLogLocked(logger *zap.Logger) {
+	if restoreStdLog == nil {
+		originalWriter := stdlog.Writer()
+		undo := zap.RedirectStdLog(logger)
+		restoreStdLog = func() {
+			undo()
+			stdlog.SetOutput(originalWriter)
+		}
+		return
+	}
+	zap.RedirectStdLog(logger)
+}
+
+func restoreStdLogLocked() {
+	if restoreStdLog == nil {
+		return
+	}
+	restoreStdLog()
+	restoreStdLog = nil
 }
 
 func buildLogger(appName string, cfg Config, atomicLevel zap.AtomicLevel) (*zap.Logger, []io.Closer, []dailyRotator, error) {
