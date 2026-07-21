@@ -240,6 +240,92 @@ func TestFileLoggerUsesOneWriterForSamePathWithDifferentNames(t *testing.T) {
 	assertFileContains(t, path, "second-message")
 }
 
+func TestInitRejectsSinkPathConflictingWithMainLogger(t *testing.T) {
+	err := Init("api", Config{
+		Level: "info",
+		Dir:   t.TempDir(),
+		Sinks: map[string]SinkConfig{
+			"access": {FileName: "info.log"},
+		},
+	})
+	if err == nil {
+		Close()
+		t.Fatal("Init() error = nil, want sink and main path conflict")
+	}
+}
+
+func TestInitRejectsTwoSinksTargetingSamePath(t *testing.T) {
+	err := Init("api", Config{
+		Dir: t.TempDir(),
+		Sinks: map[string]SinkConfig{
+			"access": {FileName: "shared.log"},
+			"audit":  {FileName: "shared.log"},
+		},
+	})
+	if err == nil {
+		Close()
+		t.Fatal("Init() error = nil, want duplicate sink path conflict")
+	}
+}
+
+func TestOpenFileLoggerRejectsConfiguredPathConflicts(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init("api", Config{
+		Level: "info",
+		Dir:   dir,
+		Sinks: map[string]SinkConfig{
+			"access": {FileName: "access.log"},
+		},
+	}); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	t.Cleanup(Close)
+
+	if logger, err := OpenFileLogger("main-conflict", "info.log"); err == nil {
+		t.Fatalf("OpenFileLogger(info.log) = %v, nil; want main path conflict", logger)
+	}
+	if logger, err := OpenFileLogger("sink-conflict", "access.log"); err == nil {
+		t.Fatalf("OpenFileLogger(access.log) = %v, nil; want sink path conflict", logger)
+	}
+}
+
+func TestOpenFileLoggerRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	logDir := filepath.Join(root, "logs")
+	link := filepath.Join(logDir, "linked")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink unavailable on this platform: %v", err)
+	}
+	if err := Init("api", Config{Dir: logDir}); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	t.Cleanup(Close)
+
+	if logger, err := OpenFileLogger("escape", "linked/escape.log"); err == nil {
+		t.Fatalf("OpenFileLogger() = %v, nil; want symlink escape error", logger)
+	}
+}
+
+func TestOpenFileLoggerPreflightsRollingFileCreation(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init("api", Config{Dir: dir, MaxSize: 1}); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	t.Cleanup(Close)
+	target := filepath.Join(dir, "api", "blocked.log")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+
+	if logger, err := OpenFileLogger("blocked", "blocked.log"); err == nil {
+		t.Fatalf("OpenFileLogger() = %v, nil; want rolling file creation error", logger)
+	}
+}
+
 func TestResolveSinkLogPathDefaults(t *testing.T) {
 	path := resolveSinkLogPath("api", Config{Dir: "logs"}, "access", SinkConfig{})
 	want := filepath.Join("logs", "api", "access.log")

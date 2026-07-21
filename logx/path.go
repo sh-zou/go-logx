@@ -2,6 +2,7 @@ package logx
 
 import (
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -96,4 +97,54 @@ func canonicalLogPath(value string) (string, error) {
 		absolute = strings.ToLower(absolute)
 	}
 	return absolute, nil
+}
+
+func canonicalLogPathWithin(baseDir, targetPath string) (string, error) {
+	resolvedBase, err := resolveWithExistingAncestor(baseDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve log base directory: %w", err)
+	}
+	resolvedTarget, err := resolveWithExistingAncestor(targetPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve log target path: %w", err)
+	}
+	relative, err := filepath.Rel(resolvedBase, resolvedTarget)
+	if err != nil {
+		return "", fmt.Errorf("compare log paths: %w", err)
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return "", fmt.Errorf("resolved path %q escapes log directory %q", resolvedTarget, resolvedBase)
+	}
+	return canonicalLogPath(resolvedTarget)
+}
+
+func resolveWithExistingAncestor(value string) (string, error) {
+	absolute, err := filepath.Abs(value)
+	if err != nil {
+		return "", err
+	}
+	current := filepath.Clean(absolute)
+	var missing []string
+	for {
+		_, err := os.Lstat(current)
+		if err == nil {
+			resolved, err := filepath.EvalSymlinks(current)
+			if err != nil {
+				return "", err
+			}
+			for index := len(missing) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, missing[index])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
 }

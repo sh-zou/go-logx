@@ -34,6 +34,9 @@ func newRollingWriter(path string, cfg Config) (zapcore.WriteSyncer, error) {
 	if cfg.MaxSize <= 0 {
 		return newPlainFileWriteSyncer(path)
 	}
+	if err := preflightLogFile(path); err != nil {
+		return nil, err
+	}
 	logger := &lumberjack.Logger{
 		Filename:   path,
 		MaxSize:    cfg.MaxSize,
@@ -46,6 +49,14 @@ func newRollingWriter(path string, cfg Config) (zapcore.WriteSyncer, error) {
 		writer:  logger,
 		rotator: logger,
 	}, nil
+}
+
+func preflightLogFile(path string) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	return file.Close()
 }
 
 func newPlainFileWriteSyncer(path string) (zapcore.WriteSyncer, error) {

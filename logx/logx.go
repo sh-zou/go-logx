@@ -24,6 +24,7 @@ var (
 	sinkLoggers     = map[string]*zap.Logger{}
 	fileLoggers     = map[string]*zap.Logger{}
 	fileBaseLoggers = map[string]*zap.Logger{}
+	managedLogPaths = map[string]string{}
 	writeClosers    []io.Closer
 	rotateClosers   []dailyRotator
 	currentAppName  string
@@ -52,6 +53,10 @@ func Init(appName string, cfg Config) error {
 	}
 
 	atomicLevel := parseLevel(cfg.Level)
+	configuredPaths, err := collectManagedLogPaths(appName, cfg, atomicLevel)
+	if err != nil {
+		return err
+	}
 	logger, closers, rotators, err := buildLogger(appName, cfg, atomicLevel)
 	if err != nil {
 		return err
@@ -76,6 +81,7 @@ func Init(appName string, cfg Config) error {
 	sinkLoggers = sinks
 	fileLoggers = map[string]*zap.Logger{}
 	fileBaseLoggers = map[string]*zap.Logger{}
+	managedLogPaths = configuredPaths
 	currentAppName = appName
 	currentConfig = cfg
 	writeClosers = append(closers, sinkClosers...)
@@ -191,7 +197,7 @@ func OpenFileLogger(name, relativePath string) (*zap.Logger, error) {
 	defer mu.Unlock()
 
 	path := filepath.Join(resolveProgramLogDir(currentAppName, currentConfig), cleanPath)
-	canonicalPath, err := canonicalLogPath(path)
+	canonicalPath, err := canonicalLogPathWithin(resolveProgramLogDir(currentAppName, currentConfig), path)
 	if err != nil {
 		return nil, fmt.Errorf("resolve log path %q: %w", relativePath, err)
 	}
@@ -203,12 +209,16 @@ func OpenFileLogger(name, relativePath string) (*zap.Logger, error) {
 		fileLoggers[key] = baseLogger.Named(name)
 		return fileLoggers[key], nil
 	}
+	if owner, ok := managedLogPaths[canonicalPath]; ok {
+		return nil, fmt.Errorf("log path %q is already managed by %s", relativePath, owner)
+	}
 
 	baseLogger, closers, rotators, err := buildSingleFileLogger(path, currentConfig, false)
 	if err != nil {
 		return nil, fmt.Errorf("open log file %q: %w", relativePath, err)
 	}
 	fileBaseLoggers[canonicalPath] = baseLogger
+	managedLogPaths[canonicalPath] = "dynamic:" + name
 	fileLoggers[key] = baseLogger.Named(name)
 	writeClosers = append(writeClosers, closers...)
 	rotateClosers = append(rotateClosers, rotators...)
@@ -249,6 +259,7 @@ func Shutdown() error {
 	sinkLoggers = map[string]*zap.Logger{}
 	fileLoggers = map[string]*zap.Logger{}
 	fileBaseLoggers = map[string]*zap.Logger{}
+	managedLogPaths = map[string]string{}
 	currentAppName = ""
 	currentConfig = Config{}
 	loggerGen.Add(1)
@@ -273,6 +284,50 @@ func syncLoggersLocked() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func collectManagedLogPaths(appName string, cfg Config, level zap.AtomicLevel) (map[string]string, error) {
+	paths := make(map[string]string, 4+len(cfg.Sinks))
+	baseDir := resolveProgramLogDir(appName, cfg)
+	add := func(logPath, owner string) error {
+		canonical, err := canonicalLogPathWithin(baseDir, logPath)
+		if err != nil {
+			return fmt.Errorf("resolve %s path: %w", owner, err)
+		}
+		if existing, ok := paths[canonical]; ok {
+			return fmt.Errorf("log path conflict: %s and %s both target %q", existing, owner, logPath)
+		}
+		paths[canonical] = owner
+		return nil
+	}
+	programPaths := resolveProgramLogPaths(appName, cfg)
+	mainPaths := []struct {
+		enabled bool
+		path    string
+		owner   string
+	}{
+		{level.Enabled(zap.DebugLevel), programPaths.debug, "main:debug"},
+		{level.Enabled(zap.InfoLevel), programPaths.info, "main:info"},
+		{level.Enabled(zap.WarnLevel), programPaths.warn, "main:warn"},
+		{level.Enabled(zap.ErrorLevel), programPaths.error, "main:error"},
+	}
+	for _, item := range mainPaths {
+		if item.enabled {
+			if err := add(item.path, item.owner); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for rawName, sinkCfg := range cfg.Sinks {
+		name := strings.TrimSpace(rawName)
+		if name == "" {
+			continue
+		}
+		if err := add(resolveSinkLogPath(appName, cfg, name, sinkCfg), "sink:"+name); err != nil {
+			return nil, err
+		}
+	}
+	return paths, nil
 }
 
 func redirectStdLogLocked(logger *zap.Logger) {

@@ -13,8 +13,10 @@ github.com/sh-zou/go-logx
 安装：
 
 ```powershell
-go get github.com/sh-zou/go-logx@v1.0.4
+go get github.com/sh-zou/go-logx@master
 ```
+
+当前文档包含尚未发布到 `v1.0.4` 的错误处理 API，因此在下一个正式版本发布前请安装 `master` 开发快照；生产使用应等待并固定到包含这些 API 的新版本标签。
 
 仓库地址：
 
@@ -135,7 +137,7 @@ if err != nil {
 scriptLog.Info("script started")
 ```
 
-`OpenFileLogger` 会返回路径校验和文件创建错误，推荐新代码使用。`FileLogger` 保留兼容行为，失败时返回 no-op logger。
+`OpenFileLogger` 会在返回前校验路径边界和目标文件可写性，并返回路径校验和文件创建错误，推荐新代码使用。`FileLogger` 保留兼容行为，失败时返回 no-op logger。
 
 动态文件路径必须是应用日志目录下的相对路径，不能使用绝对路径或 `..` 跳出日志目录。`appName` 和 `Config.FileName` 只能是单个目录名称；sink 的 `dir` 可以是应用日志目录内的相对子目录。
 
