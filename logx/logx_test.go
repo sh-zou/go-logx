@@ -133,6 +133,31 @@ func TestFileLoggerWritesDynamicRelativePath(t *testing.T) {
 	assertFileContains(t, filepath.Join(dir, "api", "scripts", "alpha.log"), "dynamic-script-message")
 }
 
+func TestOpenFileLoggerRequiresActiveInitialization(t *testing.T) {
+	if err := Init("closed", Config{Dir: t.TempDir()}); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := Shutdown(); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+
+	logger, err := OpenFileLogger("after-close", "after-close.log")
+	if err == nil {
+		t.Fatalf("OpenFileLogger() = %v, nil; want initialization error", logger)
+	}
+}
+
+func TestFileLoggerRemainsNoOpAfterClose(t *testing.T) {
+	if err := Init("closed", Config{Dir: t.TempDir()}); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	Close()
+
+	if logger := FileLogger("after-close", "after-close.log"); logger != noOpLogger {
+		t.Fatalf("FileLogger() = %p, want no-op logger %p", logger, noOpLogger)
+	}
+}
+
 func TestFileLoggerJoinsActiveRotationManager(t *testing.T) {
 	dir := t.TempDir()
 	if err := Init("api", Config{Level: "info", Dir: dir, MaxSize: 1}); err != nil {

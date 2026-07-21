@@ -35,7 +35,11 @@ var (
 	loggerGen       atomic.Uint64
 	rotationMgr     *rotationManager
 	restoreStdLog   func()
+	initialized     bool
 )
+
+// ErrNotInitialized 表示日志系统尚未初始化或已经关闭。
+var ErrNotInitialized = errors.New("logx is not initialized")
 
 type levelEnablerFunc func(level zapcore.Level) bool
 
@@ -78,6 +82,7 @@ func Init(appName string, cfg Config) error {
 	managedLogPaths = configuredPaths
 	currentAppName = appName
 	currentConfig = cfg
+	initialized = true
 	writeClosers = append(closers, sinkClosers...)
 	rotateClosers = append(append(make([]dailyRotator, 0, len(rotators)+len(sinkRotators)), rotators...), sinkRotators...)
 	loggerGen.Add(1)
@@ -189,6 +194,9 @@ func OpenFileLogger(name, relativePath string) (*zap.Logger, error) {
 
 	mu.Lock()
 	defer mu.Unlock()
+	if !initialized {
+		return nil, ErrNotInitialized
+	}
 
 	path := filepath.Join(resolveProgramLogDir(currentAppName, currentConfig), cleanPath)
 	canonicalPath, err := canonicalLogPathWithin(resolveProgramLogDir(currentAppName, currentConfig), path)
@@ -256,6 +264,7 @@ func Shutdown() error {
 	managedLogPaths = map[string]string{}
 	currentAppName = ""
 	currentConfig = Config{}
+	initialized = false
 	loggerGen.Add(1)
 	clearLoggerCachesLocked()
 	zap.ReplaceGlobals(mainLogger)
