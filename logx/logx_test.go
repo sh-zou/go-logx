@@ -123,6 +123,82 @@ func TestFileLoggerJoinsActiveRotationManager(t *testing.T) {
 	assertFileContains(t, filepath.Join(dir, "api", "scripts", "alpha.log"), "after-rotation")
 }
 
+func TestInitRejectsEscapingSinkDirectory(t *testing.T) {
+	err := Init("api", Config{
+		Dir: filepath.Join(t.TempDir(), "logs"),
+		Sinks: map[string]SinkConfig{
+			"access": {Dir: ".."},
+		},
+	})
+	if err == nil {
+		Close()
+		t.Fatal("Init() error = nil, want escaping sink directory error")
+	}
+}
+
+func TestInitRejectsAppNameWithPathSeparators(t *testing.T) {
+	err := Init(filepath.Join("nested", "api"), Config{Dir: t.TempDir()})
+	if err == nil {
+		Close()
+		t.Fatal("Init() error = nil, want appName validation error")
+	}
+}
+
+func TestOpenFileLoggerRejectsEscapingPath(t *testing.T) {
+	if err := Init("api", Config{Dir: t.TempDir()}); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	t.Cleanup(Close)
+
+	logger, err := OpenFileLogger("escape", filepath.Join("..", "escape.log"))
+	if err == nil {
+		t.Fatalf("OpenFileLogger() = %v, nil; want path validation error", logger)
+	}
+}
+
+func TestOpenFileLoggerNormalizesPortableSeparators(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init("api", Config{Dir: dir}); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	t.Cleanup(Close)
+
+	logger, err := OpenFileLogger("portable", `scripts\portable.log`)
+	if err != nil {
+		t.Fatalf("OpenFileLogger() error = %v", err)
+	}
+	logger.Info("portable-message")
+	Sync()
+	assertFileContains(t, filepath.Join(dir, "api", "scripts", "portable.log"), "portable-message")
+}
+
+func TestFileLoggerUsesOneWriterForSamePathWithDifferentNames(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init("api", Config{Dir: dir, MaxSize: 1}); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	t.Cleanup(Close)
+
+	mu.RLock()
+	before := len(writeClosers)
+	mu.RUnlock()
+	first := FileLogger("script.first", "scripts/shared.log")
+	second := FileLogger("script.second", "scripts/shared.log")
+
+	mu.RLock()
+	added := len(writeClosers) - before
+	mu.RUnlock()
+	if added != 1 {
+		t.Fatalf("managed writers added = %d, want 1", added)
+	}
+	first.Info("first-message")
+	second.Info("second-message")
+	Sync()
+	path := filepath.Join(dir, "api", "scripts", "shared.log")
+	assertFileContains(t, path, "first-message")
+	assertFileContains(t, path, "second-message")
+}
+
 func TestResolveSinkLogPathDefaults(t *testing.T) {
 	path := resolveSinkLogPath("api", Config{Dir: "logs"}, "access", SinkConfig{})
 	want := filepath.Join("logs", "api", "access.log")

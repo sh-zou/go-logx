@@ -1,6 +1,7 @@
 package logx
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,19 +16,20 @@ import (
 )
 
 var (
-	mu             sync.RWMutex
-	mainLogger     = zap.NewNop()
-	noOpLogger     = zap.NewNop()
-	sinkLoggers    = map[string]*zap.Logger{}
-	fileLoggers    = map[string]*zap.Logger{}
-	writeClosers   []io.Closer
-	rotateClosers  []dailyRotator
-	currentAppName string
-	currentConfig  Config
-	namedCache     sync.Map
-	sinkCache      sync.Map
-	loggerGen      atomic.Uint64
-	rotationMgr    *rotationManager
+	mu              sync.RWMutex
+	mainLogger      = zap.NewNop()
+	noOpLogger      = zap.NewNop()
+	sinkLoggers     = map[string]*zap.Logger{}
+	fileLoggers     = map[string]*zap.Logger{}
+	fileBaseLoggers = map[string]*zap.Logger{}
+	writeClosers    []io.Closer
+	rotateClosers   []dailyRotator
+	currentAppName  string
+	currentConfig   Config
+	namedCache      sync.Map
+	sinkCache       sync.Map
+	loggerGen       atomic.Uint64
+	rotationMgr     *rotationManager
 )
 
 type levelEnablerFunc func(level zapcore.Level) bool
@@ -41,6 +43,9 @@ func (fn levelEnablerFunc) Enabled(level zapcore.Level) bool {
 func Init(appName string, cfg Config) error {
 	mu.Lock()
 	defer mu.Unlock()
+	if err := validateInitPaths(appName, cfg); err != nil {
+		return err
+	}
 
 	atomicLevel := parseLevel(cfg.Level)
 	logger, closers, rotators, err := buildLogger(appName, cfg, atomicLevel)
@@ -57,7 +62,7 @@ func Init(appName string, cfg Config) error {
 	for _, logger := range sinkLoggers {
 		_ = logger.Sync()
 	}
-	for _, logger := range fileLoggers {
+	for _, logger := range fileBaseLoggers {
 		_ = logger.Sync()
 	}
 	closeWriteClosersLocked()
@@ -65,6 +70,7 @@ func Init(appName string, cfg Config) error {
 	mainLogger = logger
 	sinkLoggers = sinks
 	fileLoggers = map[string]*zap.Logger{}
+	fileBaseLoggers = map[string]*zap.Logger{}
 	currentAppName = appName
 	currentConfig = cfg
 	writeClosers = append(closers, sinkClosers...)
@@ -145,30 +151,48 @@ func SinkNamed(sinkName, loggerName string) *zap.Logger {
 // FileLogger 返回写入应用日志目录下指定相对路径的动态文件日志实例。
 // relativePath 必须是相对路径，且不能包含跳出日志目录的 ".."。
 func FileLogger(name, relativePath string) *zap.Logger {
-	name = strings.TrimSpace(name)
-	relativePath = strings.TrimSpace(relativePath)
-	if name == "" || relativePath == "" || filepath.IsAbs(relativePath) {
+	logger, err := OpenFileLogger(name, relativePath)
+	if err != nil {
 		return noOpLogger
 	}
-	cleanPath := filepath.Clean(relativePath)
-	if cleanPath == "." || cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) {
-		return noOpLogger
+	return logger
+}
+
+// OpenFileLogger 返回写入应用日志目录下指定相对路径的动态文件日志实例。
+// 与 FileLogger 不同，路径校验或文件创建失败时会返回错误。
+func OpenFileLogger(name, relativePath string) (*zap.Logger, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("logger name is empty")
+	}
+	cleanPath, err := cleanRelativePath(relativePath, false)
+	if err != nil {
+		return nil, fmt.Errorf("invalid log path %q: %w", relativePath, err)
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
 
-	key := name + "\x00" + cleanPath
+	path := filepath.Join(resolveProgramLogDir(currentAppName, currentConfig), cleanPath)
+	canonicalPath, err := canonicalLogPath(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve log path %q: %w", relativePath, err)
+	}
+	key := name + "\x00" + canonicalPath
 	if logger, ok := fileLoggers[key]; ok && logger != nil {
-		return logger
+		return logger, nil
+	}
+	if baseLogger, ok := fileBaseLoggers[canonicalPath]; ok && baseLogger != nil {
+		fileLoggers[key] = baseLogger.Named(name)
+		return fileLoggers[key], nil
 	}
 
-	path := filepath.Join(resolveProgramLogDir(currentAppName, currentConfig), cleanPath)
-	logger, closers, rotators, err := buildSingleFileLogger(path, currentConfig, false)
+	baseLogger, closers, rotators, err := buildSingleFileLogger(path, currentConfig, false)
 	if err != nil {
-		return noOpLogger
+		return nil, fmt.Errorf("open log file %q: %w", relativePath, err)
 	}
-	fileLoggers[key] = logger.Named(name)
+	fileBaseLoggers[canonicalPath] = baseLogger
+	fileLoggers[key] = baseLogger.Named(name)
 	writeClosers = append(writeClosers, closers...)
 	rotateClosers = append(rotateClosers, rotators...)
 	if rotationMgr == nil {
@@ -176,7 +200,7 @@ func FileLogger(name, relativePath string) *zap.Logger {
 	} else {
 		rotationMgr.Add(rotators...)
 	}
-	return fileLoggers[key]
+	return fileLoggers[key], nil
 }
 
 // Sync 刷盘日志缓冲。
@@ -187,7 +211,7 @@ func Sync() {
 	for _, logger := range sinkLoggers {
 		_ = logger.Sync()
 	}
-	for _, logger := range fileLoggers {
+	for _, logger := range fileBaseLoggers {
 		_ = logger.Sync()
 	}
 }
@@ -201,13 +225,14 @@ func Close() {
 	for _, logger := range sinkLoggers {
 		_ = logger.Sync()
 	}
-	for _, logger := range fileLoggers {
+	for _, logger := range fileBaseLoggers {
 		_ = logger.Sync()
 	}
 	closeWriteClosersLocked()
 	mainLogger = zap.NewNop()
 	sinkLoggers = map[string]*zap.Logger{}
 	fileLoggers = map[string]*zap.Logger{}
+	fileBaseLoggers = map[string]*zap.Logger{}
 	currentAppName = ""
 	currentConfig = Config{}
 	loggerGen.Add(1)
@@ -456,7 +481,8 @@ func resolveProgramLogPaths(appName string, cfg Config) programLogPaths {
 func resolveSinkLogPath(appName string, cfg Config, name string, sinkCfg SinkConfig) string {
 	baseDir := resolveProgramLogDir(appName, cfg)
 	if dir := strings.TrimSpace(sinkCfg.Dir); dir != "" {
-		baseDir = filepath.Join(baseDir, filepath.Clean(dir))
+		cleanDir, _ := cleanRelativePath(dir, true)
+		baseDir = filepath.Join(baseDir, cleanDir)
 	}
 	fileName := strings.TrimSpace(sinkCfg.FileName)
 	if fileName == "" {
