@@ -91,6 +91,38 @@ func TestFileLoggerWritesDynamicRelativePath(t *testing.T) {
 	assertFileContains(t, filepath.Join(dir, "api", "scripts", "alpha.log"), "dynamic-script-message")
 }
 
+func TestFileLoggerJoinsActiveRotationManager(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init("api", Config{Level: "info", Dir: dir, MaxSize: 1}); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	t.Cleanup(Close)
+
+	logger := FileLogger("script.alpha", "scripts/alpha.log")
+	logger.Info("before-rotation")
+	Sync()
+
+	mu.RLock()
+	manager := rotationMgr
+	mu.RUnlock()
+	if manager == nil {
+		t.Fatal("rotation manager is nil")
+	}
+	manager.rotateAll()
+
+	logger.Info("after-rotation")
+	Sync()
+	backups, err := filepath.Glob(filepath.Join(dir, "api", "scripts", "alpha-*.log"))
+	if err != nil {
+		t.Fatalf("Glob() error = %v", err)
+	}
+	if len(backups) != 1 {
+		t.Fatalf("backup files = %v, want one dynamic logger backup", backups)
+	}
+	assertFileContains(t, backups[0], "before-rotation")
+	assertFileContains(t, filepath.Join(dir, "api", "scripts", "alpha.log"), "after-rotation")
+}
+
 func TestResolveSinkLogPathDefaults(t *testing.T) {
 	path := resolveSinkLogPath("api", Config{Dir: "logs"}, "access", SinkConfig{})
 	want := filepath.Join("logs", "api", "access.log")

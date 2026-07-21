@@ -27,8 +27,7 @@ var (
 	namedCache     sync.Map
 	sinkCache      sync.Map
 	loggerGen      atomic.Uint64
-	rotateStopCh   chan struct{}
-	rotateWG       sync.WaitGroup
+	rotationMgr    *rotationManager
 )
 
 type levelEnablerFunc func(level zapcore.Level) bool
@@ -172,6 +171,11 @@ func FileLogger(name, relativePath string) *zap.Logger {
 	fileLoggers[key] = logger.Named(name)
 	writeClosers = append(writeClosers, closers...)
 	rotateClosers = append(rotateClosers, rotators...)
+	if rotationMgr == nil {
+		startRotateSchedulerLocked()
+	} else {
+		rotationMgr.Add(rotators...)
+	}
 	return fileLoggers[key]
 }
 
@@ -551,40 +555,15 @@ func startRotateSchedulerLocked() {
 	if len(rotateClosers) == 0 {
 		return
 	}
-	rotateStopCh = make(chan struct{})
-	rotateWG.Add(1)
-	go func(rotators []dailyRotator, stopCh <-chan struct{}) {
-		defer rotateWG.Done()
-		for {
-			wait := durationUntilNextMidnight(time.Now())
-			timer := time.NewTimer(wait)
-			select {
-			case <-stopCh:
-				if !timer.Stop() {
-					<-timer.C
-				}
-				return
-			case <-timer.C:
-				for _, rotator := range rotators {
-					if rotator == nil {
-						continue
-					}
-					_ = rotator.Rotate()
-				}
-			}
-		}
-	}(append([]dailyRotator(nil), rotateClosers...), rotateStopCh)
+	rotationMgr = newRotationManager(rotateClosers)
 }
 
 func stopRotateSchedulerLocked() {
-	if rotateStopCh == nil {
+	if rotationMgr == nil {
 		return
 	}
-	close(rotateStopCh)
-	rotateStopCh = nil
-	mu.Unlock()
-	rotateWG.Wait()
-	mu.Lock()
+	rotationMgr.Stop()
+	rotationMgr = nil
 }
 
 func durationUntilNextMidnight(now time.Time) time.Duration {
