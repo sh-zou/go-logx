@@ -29,6 +29,17 @@ func (c *errorCloser) Close() error {
 	return c.err
 }
 
+func TestConsoleWriteSyncerDoesNotSyncUnderlyingWriter(t *testing.T) {
+	writer := &errorWriteSyncer{syncErr: errors.New("console sync unsupported")}
+	console := newConsoleWriteSyncer(writer)
+	if _, err := console.Write([]byte("console output")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if err := console.Sync(); err != nil {
+		t.Fatalf("Sync() error = %v, want nil", err)
+	}
+}
+
 func TestFlushReturnsManagedSyncErrors(t *testing.T) {
 	if err := Init("api", Config{Dir: t.TempDir()}); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -102,4 +113,29 @@ func TestInitReturnsPreviousGenerationCleanupErrors(t *testing.T) {
 	Info("new-generation-message")
 	Sync()
 	assertFileContains(t, filepath.Join(newDir, "next", "info.log"), "new-generation-message")
+}
+
+func TestConsoleOutputDoesNotProduceLifecycleErrors(t *testing.T) {
+	Close()
+	firstDir := t.TempDir()
+	if err := Init("console-first", Config{
+		Dir:            firstDir,
+		ConsoleEnabled: true,
+		Sinks: map[string]SinkConfig{
+			"access": {ConsoleEnabled: true},
+		},
+	}); err != nil {
+		t.Fatalf("first Init() error = %v", err)
+	}
+	t.Cleanup(Close)
+
+	if err := Flush(); err != nil {
+		t.Fatalf("Flush() error with console output = %v", err)
+	}
+	if err := Init("console-second", Config{Dir: t.TempDir()}); err != nil {
+		t.Fatalf("second Init() cleanup error with console output = %v", err)
+	}
+	if err := Shutdown(); err != nil {
+		t.Fatalf("Shutdown() error after console reinitialization = %v", err)
+	}
 }

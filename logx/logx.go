@@ -43,6 +43,14 @@ var ErrNotInitialized = errors.New("logx is not initialized")
 
 type levelEnablerFunc func(level zapcore.Level) bool
 
+type writeOnly struct {
+	io.Writer
+}
+
+func newConsoleWriteSyncer(writer io.Writer) zapcore.WriteSyncer {
+	return zapcore.Lock(zapcore.AddSync(writeOnly{Writer: writer}))
+}
+
 func (fn levelEnablerFunc) Enabled(level zapcore.Level) bool {
 	return fn(level)
 }
@@ -361,7 +369,7 @@ func buildLogger(appName string, cfg Config, atomicLevel zap.AtomicLevel) (*zap.
 	if cfg.ConsoleEnabled {
 		cores = append(cores, zapcore.NewCore(
 			zapcore.NewConsoleEncoder(newConsoleEncoderConfig()),
-			zapcore.AddSync(os.Stdout),
+			newConsoleWriteSyncer(os.Stdout),
 			atomicLevel,
 		))
 	}
@@ -375,7 +383,7 @@ func buildLogger(appName string, cfg Config, atomicLevel zap.AtomicLevel) (*zap.
 	if len(cores) == 0 {
 		cores = append(cores, zapcore.NewCore(
 			zapcore.NewConsoleEncoder(newConsoleEncoderConfig()),
-			zapcore.AddSync(os.Stdout),
+			newConsoleWriteSyncer(os.Stdout),
 			atomicLevel,
 		))
 	}
@@ -411,7 +419,7 @@ func buildSinkLogger(appName string, cfg Config, name string, sinkCfg SinkConfig
 	if sinkCfg.ConsoleEnabled {
 		cores = append(cores, zapcore.NewCore(
 			zapcore.NewConsoleEncoder(newConsoleEncoderConfig()),
-			zapcore.AddSync(os.Stdout),
+			newConsoleWriteSyncer(os.Stdout),
 			sinkLevel,
 		))
 	}
@@ -435,7 +443,7 @@ func buildSinkLogger(appName string, cfg Config, name string, sinkCfg SinkConfig
 	if len(cores) == 0 {
 		cores = append(cores, zapcore.NewCore(
 			zapcore.NewConsoleEncoder(newConsoleEncoderConfig()),
-			zapcore.AddSync(os.Stdout),
+			newConsoleWriteSyncer(os.Stdout),
 			sinkLevel,
 		))
 	}
@@ -450,7 +458,7 @@ func buildSingleFileLogger(path string, cfg Config, consoleEnabled bool) (*zap.L
 	if consoleEnabled {
 		cores = append(cores, zapcore.NewCore(
 			zapcore.NewConsoleEncoder(newConsoleEncoderConfig()),
-			zapcore.AddSync(os.Stdout),
+			newConsoleWriteSyncer(os.Stdout),
 			level,
 		))
 	}
@@ -474,7 +482,7 @@ func buildSingleFileLogger(path string, cfg Config, consoleEnabled bool) (*zap.L
 	if len(cores) == 0 {
 		cores = append(cores, zapcore.NewCore(
 			zapcore.NewConsoleEncoder(newConsoleEncoderConfig()),
-			zapcore.AddSync(os.Stdout),
+			newConsoleWriteSyncer(os.Stdout),
 			level,
 		))
 	}
