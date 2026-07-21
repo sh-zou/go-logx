@@ -12,3 +12,6 @@
 - [x] 任务 8：清理跨 generation 缓存并更新 README
 - [x] 最终检查：test、vet、fmt、Windows 路径测试
 - [x] CI 检查：Linux symlink 路径测试、race 和 govulncheck 工作流
+- [x] 修复控制台输出产生的伪同步错误
+- [x] Close/Shutdown 后禁止动态 logger 重新创建文件
+- [x] 发布准备：Go 1.24/1.26 CI、固定 govulncheck、更新 v1.0.5 文档

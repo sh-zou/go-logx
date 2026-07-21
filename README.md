@@ -13,10 +13,10 @@ github.com/sh-zou/go-logx
 安装：
 
 ```powershell
-go get github.com/sh-zou/go-logx@v1.0.4
+go get github.com/sh-zou/go-logx@v1.0.5
 ```
 
-上面的命令安装稳定版 `v1.0.4`，适用于当前已发布的旧 API。本文中的 `OpenFileLogger`、`Flush` 和 `Shutdown` 属于待发布改动；使用这些 API 时，请从包含本次提交的源码构建，或等待包含它们的新版本标签，不要将它们与 `v1.0.4` 混用。
+`v1.0.5` 需要 Go 1.24 或更高版本，包含 `OpenFileLogger`、`Flush`、`Shutdown` 和 `ErrNotInitialized`。
 
 仓库地址：
 
@@ -73,13 +73,15 @@ import (
 )
 
 func main() {
-    _ = logx.Init("ssems-api", logx.Config{
+    if err := logx.Init("ssems-api", logx.Config{
         Level: "info",
         Dir:   "logs",
         Sinks: map[string]logx.SinkConfig{
             "access": {FileName: "access.log"},
         },
-    })
+    }); err != nil {
+        return
+    }
     defer logx.Close()
 
     logx.Info("service started", zap.String("component", "api"))
@@ -141,6 +143,10 @@ scriptLog.Info("script started")
 
 动态文件路径必须是应用日志目录下的相对路径，不能使用绝对路径或 `..` 跳出日志目录。`appName` 和 `Config.FileName` 只能是单个目录名称；sink 的 `dir` 可以是应用日志目录内的相对子目录。
 
+动态文件 logger 只能在 `Init` 成功后创建。`Shutdown` 或 `Close` 之后，`OpenFileLogger` 返回 `ErrNotInitialized`，`FileLogger` 返回 no-op logger，直到下一次成功调用 `Init`。
+
+路径校验会拒绝调用时已经存在的越界符号链接，但它不是文件系统沙箱。日志根目录及其父目录必须由应用信任，并禁止不受信任的本机用户或进程修改目录结构；如果无法满足这个条件，应由部署环境提供隔离后的专用日志目录。
+
 ## 错误处理
 
 `Sync` 和 `Close` 保持原有无返回值 API。需要处理磁盘同步或文件关闭错误时，使用：
@@ -157,6 +163,8 @@ if err := logx.Shutdown(); err != nil {
 `Shutdown` 与 `Close` 一样会释放全部受管理资源。二者只应选择一个作为应用退出流程。
 
 重复调用 `Init` 时，库会先切换到新配置，再返回上一代 logger 的同步或关闭错误。因此 `Init` 返回清理错误时，新配置已经生效；调用方应记录或处理该错误，不要据此重复初始化。
+
+`Flush` 和 `Shutdown` 会同步文件 writer。控制台输出直接写入 stdout，不执行不受终端或管道支持的 `fsync`，因此不会产生伪同步错误。
 
 ## 输出结构
 
@@ -209,4 +217,6 @@ logs/
 
 ```powershell
 go test ./...
+go vet ./...
+go test -race ./...
 ```
