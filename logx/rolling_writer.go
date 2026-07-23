@@ -1,6 +1,7 @@
 package logx
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,10 +18,11 @@ type dailyRotator interface {
 
 // managedWriteSyncer 为 zap 提供支持关闭和滚动的线程安全 writer。
 type managedWriteSyncer struct {
-	mu      sync.Mutex
-	writer  io.WriteCloser
-	syncer  interface{ Sync() error }
-	rotator dailyRotator
+	mu       sync.Mutex
+	writer   io.WriteCloser
+	syncer   interface{ Sync() error }
+	rotator  dailyRotator
+	syncPath string
 }
 
 func newRollingWriter(path string, cfg Config) (zapcore.WriteSyncer, error) {
@@ -46,8 +48,9 @@ func newRollingWriter(path string, cfg Config) (zapcore.WriteSyncer, error) {
 		Compress:   cfg.Compress,
 	}
 	return &managedWriteSyncer{
-		writer:  logger,
-		rotator: logger,
+		writer:   logger,
+		rotator:  logger,
+		syncPath: path,
 	}, nil
 }
 
@@ -82,10 +85,20 @@ func (w *managedWriteSyncer) Write(p []byte) (int, error) {
 func (w *managedWriteSyncer) Sync() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w == nil || w.writer == nil || w.syncer == nil {
+	if w == nil || w.writer == nil {
 		return nil
 	}
-	return w.syncer.Sync()
+	if w.syncer != nil {
+		return w.syncer.Sync()
+	}
+	if w.syncPath == "" {
+		return nil
+	}
+	file, err := os.OpenFile(w.syncPath, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	return errors.Join(file.Sync(), file.Close())
 }
 
 func (w *managedWriteSyncer) Close() error {
@@ -98,6 +111,7 @@ func (w *managedWriteSyncer) Close() error {
 	w.writer = nil
 	w.syncer = nil
 	w.rotator = nil
+	w.syncPath = ""
 	return err
 }
 

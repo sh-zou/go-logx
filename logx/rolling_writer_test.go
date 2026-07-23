@@ -1,6 +1,7 @@
 package logx
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,5 +44,25 @@ func TestRollingWriterEmptyPathReturnsNil(t *testing.T) {
 	}
 	if writer != nil {
 		t.Fatalf("newRollingWriter() = %v, want nil", writer)
+	}
+}
+
+func TestRollingWriterSyncReportsMissingActiveFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rolling.log")
+	writer, err := newRollingWriter(path, Config{MaxSize: 1})
+	if err != nil {
+		t.Fatalf("newRollingWriter() error = %v", err)
+	}
+	closer, ok := writer.(interface{ Close() error })
+	if !ok {
+		t.Fatal("rolling writer does not implement Close()")
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+	if err := writer.Sync(); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Sync() error = %v, want os.ErrNotExist", err)
 	}
 }
