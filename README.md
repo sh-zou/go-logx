@@ -164,7 +164,7 @@ if err := logx.Shutdown(); err != nil {
 
 重复调用 `Init` 时，库会先切换到新配置，再返回上一代 logger 的同步或关闭错误。因此 `Init` 返回清理错误时，新配置已经生效；调用方应记录或处理该错误，不要据此重复初始化。
 
-`Flush` 和 `Shutdown` 会同步文件 writer。控制台输出直接写入 stdout，不执行不受终端或管道支持的 `fsync`，因此不会产生伪同步错误。
+`Flush` 和 `Shutdown` 会同步普通文件 writer 以及 rolling writer 当前活动文件。控制台输出直接写入 stdout，不执行不受终端或管道支持的 `fsync`，因此不会产生伪同步错误。午夜轮转按本地日历的下一次 00:00 触发，夏令时切换不会按固定 24 小时计算。
 
 ## 输出结构
 

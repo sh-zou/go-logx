@@ -15,3 +15,6 @@
 - [x] 修复控制台输出产生的伪同步错误
 - [x] Close/Shutdown 后禁止动态 logger 重新创建文件
 - [x] 发布准备：Go 1.24/1.26 CI、固定 govulncheck、更新 v1.0.5 文档
+- [x] 修复 rolling writer 的真实文件同步
+- [x] 修复夏令时切换日的午夜轮转时间
+- [x] 固化 ErrNotInitialized 的错误优先级与 errors.Is 契约
