@@ -3,6 +3,7 @@ package logx
 import (
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type countingRotator struct {
@@ -51,5 +52,35 @@ func TestRotationManagerRejectsAddAfterStop(t *testing.T) {
 
 	if manager.Add(&countingRotator{}) {
 		t.Fatal("Add() = true after Stop(), want false")
+	}
+}
+
+func TestDurationUntilNextMidnightAcrossDaylightSavingTransitions(t *testing.T) {
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("LoadLocation() error = %v", err)
+	}
+	tests := []struct {
+		name string
+		now  time.Time
+		next time.Time
+	}{
+		{
+			name: "spring forward",
+			now:  time.Date(2026, time.March, 8, 0, 30, 0, 0, location),
+			next: time.Date(2026, time.March, 9, 0, 0, 0, 0, location),
+		},
+		{
+			name: "fall back",
+			now:  time.Date(2026, time.November, 1, 0, 30, 0, 0, location),
+			next: time.Date(2026, time.November, 2, 0, 0, 0, 0, location),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got, want := durationUntilNextMidnight(test.now), test.next.Sub(test.now); got != want {
+				t.Fatalf("durationUntilNextMidnight() = %v, want %v", got, want)
+			}
+		})
 	}
 }

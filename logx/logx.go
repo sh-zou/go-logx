@@ -739,15 +739,11 @@ func stopRotateSchedulerLocked() {
 }
 
 func durationUntilNextMidnight(now time.Time) time.Duration {
-	next := truncateDay(now).Add(24 * time.Hour)
+	year, month, day := now.Date()
+	next := time.Date(year, month, day+1, 0, 0, 0, 0, now.Location())
 	wait := next.Sub(now)
 	if wait <= 0 {
 		return time.Second
 	}
 	return wait
-}
-
-func truncateDay(value time.Time) time.Time {
-	year, month, day := value.Date()
-	return time.Date(year, month, day, 0, 0, 0, 0, value.Location())
 }
