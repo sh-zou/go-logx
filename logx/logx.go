@@ -191,6 +191,12 @@ func FileLogger(name, relativePath string) *zap.Logger {
 // OpenFileLogger 返回写入应用日志目录下指定相对路径的动态文件日志实例。
 // 与 FileLogger 不同，路径校验或文件创建失败时会返回错误。
 func OpenFileLogger(name, relativePath string) (*zap.Logger, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	if !initialized {
+		return nil, ErrNotInitialized
+	}
+
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("logger name is empty")
@@ -198,12 +204,6 @@ func OpenFileLogger(name, relativePath string) (*zap.Logger, error) {
 	cleanPath, err := cleanRelativePath(relativePath, false)
 	if err != nil {
 		return nil, fmt.Errorf("invalid log path %q: %w", relativePath, err)
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-	if !initialized {
-		return nil, ErrNotInitialized
 	}
 
 	path := filepath.Join(resolveProgramLogDir(currentAppName, currentConfig), cleanPath)

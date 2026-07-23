@@ -2,6 +2,7 @@ package logx
 
 import (
 	"bytes"
+	"errors"
 	stdlog "log"
 	"os"
 	"path/filepath"
@@ -141,9 +142,22 @@ func TestOpenFileLoggerRequiresActiveInitialization(t *testing.T) {
 		t.Fatalf("Shutdown() error = %v", err)
 	}
 
-	logger, err := OpenFileLogger("after-close", "after-close.log")
-	if err == nil {
-		t.Fatalf("OpenFileLogger() = %v, nil; want initialization error", logger)
+	tests := []struct {
+		name         string
+		loggerName   string
+		relativePath string
+	}{
+		{name: "valid arguments", loggerName: "after-close", relativePath: "after-close.log"},
+		{name: "empty logger name", loggerName: "", relativePath: "after-close.log"},
+		{name: "invalid path", loggerName: "after-close", relativePath: "../after-close.log"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			logger, err := OpenFileLogger(test.loggerName, test.relativePath)
+			if !errors.Is(err, ErrNotInitialized) {
+				t.Fatalf("OpenFileLogger() = %v, %v; want ErrNotInitialized", logger, err)
+			}
+		})
 	}
 }
 
