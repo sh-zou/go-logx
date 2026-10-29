@@ -183,3 +183,11 @@ logs/
 ```powershell
 go test ./...
 ```
+
+## License
+
+本项目基于 [MIT License](LICENSE) 开源。
+
+```text
+Copyright (c) 2026 sh-zou
+```
